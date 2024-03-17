@@ -6,6 +6,7 @@ openpyxl
 
 import argparse
 import datetime
+import getpass
 import io
 import json
 from itertools import islice
@@ -36,6 +37,15 @@ def get_argument_parser(
         required=False,
         default=None,
     )
+    arg_parser.add_argument(
+        "-P", "--protected",
+        type=bool,
+        help="Password if the given xls/xlsx spreadsheet encrypted is encrypted.",
+        required=False,
+        default=False,
+        action=argparse.BooleanOptionalAction,
+
+    )
     default_sheet_name = "Sheet1"
     arg_parser.add_argument(
         "-s", "--sheet",
@@ -53,7 +63,7 @@ def get_argument_parser(
         default=default_output_file
     )
     arg_parser.add_argument(
-        "-P", "--pretty",
+        "--pretty",
         type=bool,
         help="When active, the output json will be printed with a 2 character indentation.",
         required=False,
@@ -62,7 +72,8 @@ def get_argument_parser(
     )
     default_mapping_labels = ["id", "name", "surname", "email", "created_at"]
     arg_parser.add_argument(
-        "-m", "--mapping_labels",
+        "-m", "--mapping-labels",
+        metavar="mapping_labels",
         type=str,
         help=f"Used to provide a custom mapping labels list. Default value = \"{default_mapping_labels}\"",
         nargs="+",
@@ -71,12 +82,17 @@ def get_argument_parser(
     )
     default_unique_key = "email"
     arg_parser.add_argument(
-        "-u", "--unique_key",
+        "-u", "--unique-key",
+        metavar="unique_key",
         help=f"Used to provide the column number or label for the unique key. If not provided, the column with id \"{default_unique_key}\" will be used.",
         required=False,
         default=default_unique_key,
     )
     return arg_parser
+
+
+def get_password() -> str:
+    return getpass.getpass("worksheet password: ")
 
 
 def decrypt(file_path: str, password: str) -> io.BytesIO:
@@ -149,8 +165,9 @@ def main(
         pretty: bool,
         mapping_labels: list[str],
         unique_key: int | str,
+        protected: bool,
 ) -> None:
-    workbook = load_workbook(file_path=file_path, password=password)
+    workbook = load_workbook(file_path=file_path, password=get_password() if protected and not password else password)
     data = map_data(workbook=workbook, sheet=sheet, mapping_labels=mapping_labels, unique_key=unique_key)
     save_json(file_path=output, data=data, pretty=pretty)
 
