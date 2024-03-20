@@ -106,6 +106,12 @@ def get_argument_parser(
         required=False,
         default=default_unique_key,
     )
+    arg_parser.add_argument(
+        "--flat",
+        help="Maps a specific column as a json list of strings",
+        type=str,
+        required=False,
+    )
     return arg_parser
 
 
@@ -128,35 +134,6 @@ def load_workbook(file_path: str, password: str | None = None) -> openpyxl.Workb
 
 def find_column_index(row: tuple[Cell, ...], label: str) -> int:
     return next(i for i, cell in enumerate(row) if cell.value == label)
-
-
-def map_data(
-    workbook: openpyxl.Workbook,
-    sheet: str,
-    mapping_labels: list[str],
-    unique_key: int | str | None,
-) -> list[dict[str, Any]]:
-    def value(cell: Cell):
-        return (
-            cell.value
-            if type(cell.value) is not datetime.datetime
-            else cell.value.strftime("%Y-%m-%dT%H:%M:%S") + ".000Z"
-        )
-
-    def map_row(row: tuple[Cell, ...]) -> dict:
-        return {v: value(row[i]) for i, v in enumerate(mapping_labels)}
-
-    unique_key_index = (
-        unique_key
-        if type(unique_key) is int
-        else find_column_index(row=next(workbook[sheet].rows), label=unique_key)
-    )
-    return list(
-        {
-            row[unique_key_index].value: map_row(row)
-            for row in islice(workbook[sheet].rows, 1, None)
-        }.values()
-    )
 
 
 def load_format(format_file: str) -> dict:
@@ -226,9 +203,28 @@ def map_formatted_data(
     )
 
 
+def map_flat(
+    workbook: openpyxl.Workbook,
+    sheet: str,
+    label: int | str,
+) -> list[dict]:
+    label_index = (
+        label
+        if type(label) is int
+        else find_column_index(next(workbook[sheet].rows), label)
+    )
+    return list(
+        set([row[label_index].value for row in islice(workbook[sheet].rows, 1, None)])
+    )
+
+
 def save_json(file_path: str, data: list[dict[str, Any]], pretty: bool) -> None:
     with open(file_path, "w") as f:
         f.write(json.dumps(data, indent=2 if pretty else None))
+
+
+def labels_to_format(mapping_labels: list[str]) -> dict:
+    return {label: "{" + label + "}" for label in mapping_labels}
 
 
 def main(
@@ -240,21 +236,25 @@ def main(
     mapping_labels: list[str],
     unique_key: int | str,
     format_file: str | None,
+    flat: str | None,
 ) -> None:
     workbook = load_workbook(file_path=file_path, password=password)
 
-    if format_file is None:
-        data = map_data(
+    if flat is not None:
+        data = map_flat(
             workbook=workbook,
             sheet=sheet,
-            mapping_labels=mapping_labels,
-            unique_key=unique_key,
+            label=flat,
         )
     else:
         data = map_formatted_data(
             workbook=workbook,
             sheet=sheet,
-            mapping_format=load_format(format_file=format_file),
+            mapping_format=(
+                load_format(format_file=format_file)
+                if format_file is not None
+                else labels_to_format(mapping_labels=mapping_labels)
+            ),
             unique_key=unique_key,
         )
 
