@@ -6,6 +6,7 @@ openpyxl
 
 import argparse
 import datetime
+import getpass
 import io
 import json
 import re
@@ -19,7 +20,7 @@ from openpyxl.cell import Cell
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-version = "1.2.0"
+version = "1.3.0"
 
 
 def get_argument_parser(
@@ -31,11 +32,21 @@ def get_argument_parser(
         epilog="",
     )
     arg_parser.add_argument("file_path", type=str, help="Excel spreadsheet path")
-    arg_parser.add_argument(
+    password_group = arg_parser.add_mutually_exclusive_group(required=False)
+    password_group.add_argument(
         "-p",
         "--password",
+        type=bool,
+        help="A password prompt will be presented to securely give the key for the file.",
+        required=False,
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    password_group.add_argument(
+        "--file-password",
         type=str,
-        help="Password if the given xls/xlsx spreadsheet encrypted is encrypted.",
+        help="""Password if the given xls/xlsx spreadsheet is encrypted.
+It's suggested to use the \"--password\" option, as this makes the file password recorded in the command history.""",
         required=False,
         default=None,
     )
@@ -239,7 +250,8 @@ def labels_to_format(mapping_labels: list[str]) -> dict:
 def _main(
     file_path: str,
     sheet_name: str | None,
-    password: str | None,
+    password: bool,
+    file_password: str | None,
     output: str | None,
     pretty: bool,
     mapping_labels: list[str] | None,
@@ -247,7 +259,9 @@ def _main(
     format_file: str | None,
     flat: str | None,
 ) -> None:
-    workbook = load_workbook(file_path=file_path, password=password)
+    file_password = getpass.getpass("File password: ") if password else file_password
+
+    workbook = load_workbook(file_path=file_path, password=file_password)
     sheet = get_sheet(workbook=workbook, sheet_name=sheet_name)
 
     if flat is not None:
