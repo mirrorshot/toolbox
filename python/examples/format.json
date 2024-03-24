@@ -1,0 +1,9 @@
+{
+  "row": "{_row_number}",
+  "person": {
+    "personal_code": "{ID}",
+    "location": {
+      "city": "{City}"
+    }
+  }
+}
