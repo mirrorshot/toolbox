@@ -16,15 +16,19 @@ from typing import Any
 import msoffcrypto
 import openpyxl
 from openpyxl.cell import Cell
+from openpyxl.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
-version = "1.0.0"
+version = "1.2.0"
 
 
 def get_argument_parser(
     parent_parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
     arg_parser = parent_parser or argparse.ArgumentParser(
-        description="Tool used to extract data from an Excel spreadsheet to a json file."
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="Tool used to extract data from an Excel spreadsheet to a json file.",
+        epilog="",
     )
     arg_parser.add_argument("file_path", type=str, help="Excel spreadsheet path")
     arg_parser.add_argument(
@@ -35,23 +39,20 @@ def get_argument_parser(
         required=False,
         default=None,
     )
-    default_sheet_name = "Sheet1"
     arg_parser.add_argument(
         "-s",
-        "--sheet",
+        "--sheet-name",
+        metavar="sheet_name",
         type=str,
-        help=f'Name of the xls/xlsx sheet where the data are stored. Default value = "{default_sheet_name}"',
+        help="""Name of the xls/xlsx sheet where the data are stored.""",
         required=False,
-        default=default_sheet_name,
     )
-    default_output_file = "newsletter-user-data.json"
     arg_parser.add_argument(
         "-o",
         "--output",
         type=str,
-        help=f'Output file path. Default value = "{default_output_file}"',
+        help="""Output file path.""",
         required=False,
-        default=default_output_file,
     )
     arg_parser.add_argument(
         "-P",
@@ -62,54 +63,51 @@ def get_argument_parser(
         default=False,
         action=argparse.BooleanOptionalAction,
     )
-    arg_parser.add_argument(
+    format_group = arg_parser.add_mutually_exclusive_group(required=True)
+    format_group.add_argument(
         "-f",
         "--format-file",
         metavar="format_file",
         type=str,
         help="""Used to provide a custom mapping format defined in a json file.
-        Example: {
-          "row": "{_row_number}",
-          "email": "{email}",
-          "user": {
-            "name": "{name}",
-            "surname": "{surname}"
-          },
-          "operation_datetime": "{_now}"
-        }
-        The "{label}" notation searches for a field with that name in the header row.
-        The following fields are runtime generated:
-        - _row_number
-        - _now
-        Fields mapping supports the standard Python format notation for formatted strings.
-        """,
+Example: {
+  "row": "{_row_number}",
+  "email": "{email}",
+  "user": {
+    "name": "{name}",
+    "surname": "{surname}"
+  },
+  "operation_datetime": "{_now}"
+}
+The "{label}" notation searches for a field with that name in the header row.
+The following fields are runtime generated:
+- _row_number
+- _now
+Fields mapping supports the standard Python format notation for formatted strings.
+""",
         required=False,
         default=None,
     )
-    default_mapping_labels = ["id", "name", "surname", "email", "created_at"]
-    arg_parser.add_argument(
+    format_group.add_argument(
         "-m",
         "--mapping-labels",
         metavar="mapping_labels",
         type=str,
-        help=f'Used to provide a custom mapping labels list. Default value = "{default_mapping_labels}"',
+        help="""Used to provide a custom mapping labels list.""",
         nargs="+",
         required=False,
-        default=default_mapping_labels,
     )
-    default_unique_key = "email"
+    format_group.add_argument(
+        "--flat",
+        help="Maps a specific column as a json list of strings",
+        type=str,
+        required=False,
+    )
     arg_parser.add_argument(
         "-u",
         "--unique-key",
         metavar="unique_key",
-        help=f'Used to provide the column number or label for the unique key. If not provided, the column with id "{default_unique_key}" will be used.',
-        required=False,
-        default=default_unique_key,
-    )
-    arg_parser.add_argument(
-        "--flat",
-        help="Maps a specific column as a json list of strings",
-        type=str,
+        help="""Used to provide the column number or label for the unique key.""",
         required=False,
     )
     return arg_parser
@@ -126,10 +124,21 @@ def decrypt(file_path: str, password: str) -> io.BytesIO:
     return decrypted_workbook
 
 
-def load_workbook(file_path: str, password: str | None = None) -> openpyxl.Workbook:
+def load_workbook(file_path: str, password: str | None = None) -> Workbook:
     return openpyxl.load_workbook(
         file_path if password is None else decrypt(file_path, password)
     )
+
+
+def get_sheet(workbook: Workbook, sheet_name: str) -> Worksheet:
+    if sheet_name in workbook:
+        worksheet = workbook[sheet_name]
+        print(f"{type(worksheet) = }")
+        return worksheet
+    else:
+        print(f"Worksheet not found: {sheet_name}")
+        print(f"Available worksheet(s): {workbook.sheetnames}")
+        exit(-1)
 
 
 def find_column_index(row: tuple[Cell, ...], label: str) -> int:
@@ -142,17 +151,14 @@ def load_format(format_file: str) -> dict:
 
 
 def map_formatted_data(
-    workbook: openpyxl.Workbook,
-    sheet: str,
+    sheet: Worksheet,
     mapping_format: dict,
     unique_key: int | str | None,
 ) -> list[dict]:
     _now = datetime.datetime.now()
 
     def clean_label(label):
-        match = re.match(pattern=r"{(\w*)(:.*)?}", string=label)
-        # print(f"{label = } -> {match.groups() = }")
-        return match.group(1)
+        return re.match(pattern=r"{(\w*)(:.*)?}", string=label).group(1)
 
     def extract_labels(mapping: dict[str, Any]) -> list[str]:
         labels = []
@@ -163,14 +169,11 @@ def map_formatted_data(
                 labels.extend(extract_labels(v))
         return labels
 
-    mapped_labels = extract_labels(mapping_format)
     label_indexes = {
         h.value: i
-        for i, h in enumerate(next(workbook[sheet].rows))
-        if h.value in mapped_labels
+        for i, h in enumerate(next(sheet.rows))
+        if h.value in extract_labels(mapping_format)
     }
-    # print(f"{mapped_labels = }")
-    # print(f"{label_indexes = }")
 
     def _map_formatted(row: dict[str, Any], mf: dict | str) -> dict | str:
         return (
@@ -180,75 +183,80 @@ def map_formatted_data(
         )
 
     def map_formatted_row(row_number: int, row: tuple[Cell, ...], mf: dict) -> dict:
-        dict_row = {label: row[index].value for label, index in label_indexes.items()}
-        # print(f"{dict_row = }")
         return _map_formatted(
             dict(
                 ChainMap(
                     {"_row_number": row_number, "_now": _now},
-                    dict_row,
+                    {label: row[index].value for label, index in label_indexes.items()},
                 )
             ),
-            mf,
+            mf=mf,
         )
 
-    unique_key_index = (
-        unique_key if type(unique_key) is int else label_indexes[unique_key]
-    )
-    return list(
-        {
-            row[unique_key_index].value: map_formatted_row(i, row, mapping_format)
-            for i, row in islice(enumerate(workbook[sheet].rows), 1, None)
-        }.values()
-    )
+    if unique_key is None:
+        return [
+            map_formatted_row(i, row, mapping_format)
+            for i, row in islice(enumerate(sheet.rows), 1, None)
+        ]
+    else:
+        unique_key_index = (
+            unique_key if type(unique_key) is int else label_indexes[unique_key]
+        )
+        return list(
+            {
+                row[unique_key_index].value: map_formatted_row(i, row, mapping_format)
+                for i, row in islice(enumerate(sheet.rows), 1, None)
+            }.values()
+        )
 
 
 def map_flat(
-    workbook: openpyxl.Workbook,
-    sheet: str,
     label: int | str,
+    sheet: Worksheet,
 ) -> list[dict]:
     label_index = (
-        label
-        if type(label) is int
-        else find_column_index(next(workbook[sheet].rows), label)
+        label if type(label) is int else find_column_index(next(sheet.rows), label)
     )
-    return list(
-        set([row[label_index].value for row in islice(workbook[sheet].rows, 1, None)])
-    )
+    return list(set([row[label_index].value for row in islice(sheet.rows, 1, None)]))
 
 
-def save_json(file_path: str, data: list[dict[str, Any]], pretty: bool) -> None:
-    with open(file_path, "w") as f:
-        f.write(json.dumps(data, indent=2 if pretty else None))
+def produce_output(
+    file_path: str | None,
+    data: list[dict[str, Any]],
+    pretty: bool,
+) -> None:
+    if file_path is not None:
+        with open(file_path, "w") as f:
+            json.dump(data, fp=f, indent=2 if pretty else None)
+    else:
+        print(json.dumps(data, indent=2 if pretty else None))
 
 
 def labels_to_format(mapping_labels: list[str]) -> dict:
     return {label: "{" + label + "}" for label in mapping_labels}
 
 
-def main(
+def _main(
     file_path: str,
-    sheet: str,
-    password: str,
-    output: str,
+    sheet_name: str | None,
+    password: str | None,
+    output: str | None,
     pretty: bool,
-    mapping_labels: list[str],
-    unique_key: int | str,
+    mapping_labels: list[str] | None,
+    unique_key: int | str | None,
     format_file: str | None,
     flat: str | None,
 ) -> None:
     workbook = load_workbook(file_path=file_path, password=password)
+    sheet = get_sheet(workbook=workbook, sheet_name=sheet_name)
 
     if flat is not None:
         data = map_flat(
-            workbook=workbook,
             sheet=sheet,
             label=flat,
         )
     else:
         data = map_formatted_data(
-            workbook=workbook,
             sheet=sheet,
             mapping_format=(
                 load_format(format_file=format_file)
@@ -258,7 +266,7 @@ def main(
             unique_key=unique_key,
         )
 
-    save_json(file_path=output, data=data, pretty=pretty)
+    produce_output(file_path=output, data=data, pretty=pretty)
 
 
 if __name__ == "__main__":
@@ -267,4 +275,4 @@ if __name__ == "__main__":
         "-v", "--version", action="version", version=f"%(prog)s {version}"
     )
     args = argument_parser.parse_args()
-    main(**vars(args))
+    _main(**vars(args))
